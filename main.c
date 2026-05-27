@@ -20,6 +20,13 @@ struct v2 {
     float y;
 };
 
+struct v4 {
+    float r;
+    float g;
+    float b;
+    float a;
+};
+
 struct d2 {
     float w;
     float h;
@@ -28,16 +35,31 @@ struct d2 {
 struct Player {
     struct v2 position;
     struct d2 dimension;
+    struct v4 color;
     int velocity;
+    unsigned int ebo_offset;
 };
 
 struct Background {
+    struct v2 position;
     struct d2 dimension;
+    struct v4 color;
+    unsigned int ebo_offset;
 };
 
 struct Ball {
     struct v2 position;
+    struct d2 dimension;
+    struct v4 color;
     int velocity;
+    unsigned int ebo_offset;
+};
+
+struct Geometry {
+    GLfloat *data;
+    GLuint *indices;
+    size_t data_count;
+    size_t indices_count;
 };
 
 struct App app;
@@ -45,6 +67,11 @@ struct Player player1;
 struct Player player2;
 struct Ball ball;
 struct Background background;
+
+#define NUM_ENTITIES 4
+GLfloat data[NUM_ENTITIES * 4 * (2 + 4)]; // num_ent * num_vert_per_ent * (num_float_per_vert + num_float_per_color)
+GLuint indices[NUM_ENTITIES * 6];   // num_ent * 2 triangles (6 indices)
+struct Geometry geometry = { data, indices, 0, 0 }; 
 
 
 static char *read_file(const char *path) {
@@ -113,16 +140,33 @@ void window_destroy(GLFWwindow *win) {
 }
 
 
-int entity_data_append(struct d2 dim, GLfloat *buffer, GLuint offset, GLuint *indices) {
-    buffer[0] = 0.0f;   buffer[1] = 0.0f;   // top-left     0
-    buffer[2] = dim.w;  buffer[3] = 0.0f;   // top-right    1
-    buffer[4] = dim.w;  buffer[5] = dim.h;  // bottom-right 2
-    buffer[6] = 0.0f;   buffer[7] = dim.h;  // bottom-left  3
-    
+unsigned int geometry_append_quad(struct Geometry *geo, struct d2 dim, struct v4 color) {
+
+    // assumes 2 floats for 2d position
+    GLfloat *data = geo->data + geo->data_count * (2 + 4);
+    GLuint *indices = geo->indices + geo->indices_count;
+
+    data[0] = -dim.w / 2.0f;    data[1] = -dim.h / 2.0f;   // top-left     0
+    data[2] = color.r; data[3] = color.g; data[4] = color.b; data[5] = color.a;
+
+    data[6] =  dim.w / 2.0f;    data[7] = -dim.h / 2.0f;   // top-right    1
+    data[8] = color.r; data[9] = color.g; data[10] = color.b; data[11] = color.a;
+
+    data[12] =  dim.w / 2.0f;   data[13] = dim.h / 2.0f;   // bottom-right 2
+    data[14] = color.r; data[15] = color.g; data[16] = color.b; data[17] = color.a;
+
+    data[18] = -dim.w / 2.0f;   data[19] = dim.h / 2.0f;  // bottom-left  3
+    data[20] = color.r; data[21] = color.g; data[22] = color.b; data[23] = color.a;
+
+    GLuint offset = geo->data_count;
     indices[0] = 0 + offset; indices[1] = 1 + offset; indices[2] = 2 + offset;
     indices[3] = 3 + offset; indices[4] = 2 + offset; indices[5] = 0 + offset;
+    
+    unsigned int byte_offset = geo->indices_count * sizeof(GLuint);
+    geo->data_count += 4;
+    geo->indices_count += 6;
 
-    return 8;
+    return byte_offset;
 }
 
 
@@ -134,20 +178,29 @@ int main() {
     glfwGetFramebufferSize(app.window, &app.window_width, &app.window_height);
     window_onresize(app.window, app.window_width, app.window_height);
 
-    player1.position = (struct v2){ .x = 0.2f, .y = 1.5f };
-    player1.dimension = (struct d2){ .w = 0.15f, .h = 0.6f };
+    player1.position = (struct v2) { .x = 0.2f, .y = 1.5f };
+    player1.dimension = (struct d2) { .w = 0.15f, .h = 0.6f };
+    player1.color = (struct v4) { .r = 1.0f, .g = 0.0f, .b = 1.0f, .a = 1.0f };
     player1.velocity = 1;
 
-    player2.position = (struct v2){ .x = 4 - 0.15f - 0.2f, .y = 1.5f };
-    player2.dimension = (struct d2){ .w = 0.15f, .h = 0.6f };
+    player2.position = (struct v2) { .x = 4 - 0.15f - 0.2f, .y = 1.5f };
+    player2.dimension = (struct d2) { .w = 0.15f, .h = 0.6f };
+    player2.color = (struct v4) { .r = 1.0f, .g = 0.0f, .b = 1.0f, .a = 1.0f };
     player2.velocity = 1;
 
-    GLfloat data[16];
-    GLuint indices[12];
-    entity_data_append(player1.dimension,   data +  0,  0, indices + 0);
-    entity_data_append(player2.dimension,   data +  8,  4, indices + 6);
-    // entity_data_append(background.dimension,data + 16, 12, indices);
+    background.position = (struct v2) { .x = 4.0f / 2.0f, .y = 3.0f / 2.0f };
+    background.dimension = (struct d2) { .w = 4.0f, .h = 3.0f };
+    background.color = (struct v4) { .r = 0.6f, .g = 1.0f, .b = 0.8f, .a = 1.0f };
 
+    ball.position = (struct v2) { .x = 4.0f / 2.0f, .y = 3.0f / 2.0f };
+    ball.dimension = (struct d2) { .w = 0.15f, .h = 0.15f };
+    ball.color = (struct v4) { .r = 1.0f, .g = 0.0f, .b = 0.0f, .a = 1.0f };
+    ball.velocity = 1;
+
+    background.ebo_offset = geometry_append_quad(&geometry, background.dimension, background.color);
+    player1.ebo_offset = geometry_append_quad(&geometry, player1.dimension, player1.color);
+    player2.ebo_offset = geometry_append_quad(&geometry, player2.dimension, player2.color);
+    ball.ebo_offset = geometry_append_quad(&geometry, ball.dimension, ball.color);
 
     GLuint vao, vbo, ebo;
     glGenVertexArrays(1, &vao);
@@ -161,8 +214,11 @@ int main() {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *) 0);
     glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *) (sizeof(float) * 2));
+    glEnableVertexAttribArray(1);
 
     // create shader program
     char *vert_src = read_file("vert.glsl");
@@ -191,6 +247,13 @@ int main() {
     GLint model_loc = glGetUniformLocation(prog, "model");
     glUniformMatrix4fv(proj_loc, 1, GL_FALSE, proj);
 
+    float background_model[16] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        background.position.x, background.position.y, 0.0f, 1.0f,
+    };
+
     float player1_model[16] = {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 0.0f,
@@ -205,6 +268,12 @@ int main() {
         player2.position.x, player2.position.y, 0.0f, 1.0f,
     };
 
+    float ball_model[16] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        ball.position.x, ball.position.y, 0.0f, 1.0f,
+    };
 
     while (!glfwWindowShouldClose(app.window)) {
 
@@ -257,11 +326,17 @@ int main() {
         glUseProgram(prog);
         glBindVertexArray(vao);
 
+        glUniformMatrix4fv(model_loc, 1, GL_FALSE, background_model);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) background.ebo_offset);
+
         glUniformMatrix4fv(model_loc, 1, GL_FALSE, player1_model);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) 0);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) player1.ebo_offset);
 
         glUniformMatrix4fv(model_loc, 1, GL_FALSE, player2_model);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) (6 * sizeof(GLuint)));
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) player2.ebo_offset);
+
+        glUniformMatrix4fv(model_loc, 1, GL_FALSE, ball_model);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) ball.ebo_offset);
 
         glfwSwapBuffers(app.window);
     }

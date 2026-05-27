@@ -1,2 +1,2 @@
 #!/bin/bash
-gcc -Wall -Wextra -g -std=c99 main.c -o pong -lglfw -lGL && ./pong
+bash build.sh && LSAN_OPTIONS=suppressions=run.lsan.supp ./pong
