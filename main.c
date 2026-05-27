@@ -113,7 +113,7 @@ void window_destroy(GLFWwindow *win) {
 }
 
 
-int entity_data_append(struct d2 dim, float *buffer, int offset, int *indices) {
+int entity_data_append(struct d2 dim, GLfloat *buffer, GLuint offset, GLuint *indices) {
     buffer[0] = 0.0f;   buffer[1] = 0.0f;   // top-left     0
     buffer[2] = dim.w;  buffer[3] = 0.0f;   // top-right    1
     buffer[4] = dim.w;  buffer[5] = dim.h;  // bottom-right 2
@@ -142,10 +142,10 @@ int main() {
     player2.dimension = (struct d2){ .w = 0.15f, .h = 0.6f };
     player2.velocity = 1;
 
-    float data[16];
-    int indices[12];
+    GLfloat data[16];
+    GLuint indices[12];
     entity_data_append(player1.dimension,   data +  0,  0, indices + 0);
-    entity_data_append(player2.dimension,   data +  8,  8, indices + 6);
+    entity_data_append(player2.dimension,   data +  8,  4, indices + 6);
     // entity_data_append(background.dimension,data + 16, 12, indices);
 
 
@@ -258,10 +258,10 @@ int main() {
         glBindVertexArray(vao);
 
         glUniformMatrix4fv(model_loc, 1, GL_FALSE, player1_model);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) 0);
 
         glUniformMatrix4fv(model_loc, 1, GL_FALSE, player2_model);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) 6);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) (6 * sizeof(GLuint)));
 
         glfwSwapBuffers(app.window);
     }
