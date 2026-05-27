@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash build.sh*)",
+      "Bash(bash run.sh*)"
+    ]
+  }
+}

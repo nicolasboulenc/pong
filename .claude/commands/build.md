@@ -1,0 +1,1 @@
+Run `bash build.sh 2>&1` from the project root and report all warnings and errors. If the build succeeds with no warnings, say so. If there are warnings or errors, quote them exactly and identify which line in which file each comes from.
