@@ -36,6 +36,7 @@ struct Player {
     struct v2 position;
     struct d2 dimension;
     struct v4 color;
+    float transform[16];
     int velocity;
     unsigned int ebo_offset;
 };
@@ -44,6 +45,7 @@ struct Background {
     struct v2 position;
     struct d2 dimension;
     struct v4 color;
+    float transform[16];
     unsigned int ebo_offset;
 };
 
@@ -51,6 +53,7 @@ struct Ball {
     struct v2 position;
     struct d2 dimension;
     struct v4 color;
+    float transform[16];
     int velocity;
     unsigned int ebo_offset;
 };
@@ -170,6 +173,20 @@ unsigned int geometry_append_quad(struct Geometry *geo, struct d2 dim, struct v4
 }
 
 
+void mat4_identity(float m[16]) {
+
+    m[0] =  1.0f; m[1] =  0.0f; m[2] =  0.0f; m[3] =  0.0f;
+    m[4] =  0.0f; m[5] =  1.0f; m[6] =  0.0f; m[7] =  0.0f;
+    m[8] =  0.0f; m[9] =  0.0f; m[10] = 1.0f; m[11] = 0.0f;
+    m[12] = 0.0f; m[13] = 0.0f; m[14] = 0.0f; m[15] = 1.0f;
+}
+
+
+void mat4_translate(float m[16], float x, float y) {
+    m[12] = x; m[13] = y;
+}
+
+
 int main() {
 
     app.window = window_create();
@@ -247,12 +264,8 @@ int main() {
     GLint model_loc = glGetUniformLocation(prog, "model");
     glUniformMatrix4fv(proj_loc, 1, GL_FALSE, proj);
 
-    float background_model[16] = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        background.position.x, background.position.y, 0.0f, 1.0f,
-    };
+    mat4_identity(background.transform);
+    mat4_translate(background.transform, background.position.x, background.position.y);
 
     float player1_model[16] = {
         1.0f, 0.0f, 0.0f, 0.0f,
@@ -326,7 +339,7 @@ int main() {
         glUseProgram(prog);
         glBindVertexArray(vao);
 
-        glUniformMatrix4fv(model_loc, 1, GL_FALSE, background_model);
+        glUniformMatrix4fv(model_loc, 1, GL_FALSE, background.transform);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) background.ebo_offset);
 
         glUniformMatrix4fv(model_loc, 1, GL_FALSE, player1_model);
