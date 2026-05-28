@@ -5,6 +5,7 @@
 #include <GL/glcorearb.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
 #include <time.h>
 
 
@@ -182,8 +183,43 @@ void mat4_identity(float m[16]) {
 }
 
 
-void mat4_translate(float m[16], float x, float y) {
-    m[12] = x; m[13] = y;
+void mat4_translate(float m[16], float tx, float ty) {
+
+    m[0] =  1.0f; m[1] =  0.0f; m[2] =  0.0f; m[3] =  0.0f;
+    m[4] =  0.0f; m[5] =  1.0f; m[6] =  0.0f; m[7] =  0.0f;
+    m[8] =  0.0f; m[9] =  0.0f; m[10] = 1.0f; m[11] = 0.0f;
+    m[12] = tx;   m[13] = ty;   m[14] = 0.0f; m[15] = 1.0f;
+}
+
+
+void mat4_scale(float m[16], float sx, float sy) {
+
+    m[0] =  sx;   m[1] =  0.0f; m[2] =  0.0f; m[3] =  0.0f;
+    m[4] =  0.0f; m[5] =  sy;   m[6] =  0.0f; m[7] =  0.0f;
+    m[8] =  0.0f; m[9] =  0.0f; m[10] = 1.0f; m[11] = 0.0f;
+    m[12] = 0.0f; m[13] = 0.0f; m[14] = 0.0f; m[15] = 1.0f;
+}
+
+
+void mat4_rotate(float m[16], float rz) {
+
+    m[0] =  cos(rz); m[1] = -sin(rz); m[2] =  0.0f; m[3] =  0.0f;
+    m[4] =  sin(rz); m[5] =  cos(rz); m[6] =  0.0f; m[7] =  0.0f;
+    m[8] =  0.0f;    m[9] =  0.0f;    m[10] = 1.0f; m[11] = 0.0f;
+    m[12] = 0.0f;    m[13] = 0.0f;    m[14] = 0.0f; m[15] = 1.0f;
+}
+
+
+void mat4_mul(float out[16], float a[16], float b[16]) {
+
+    for (int col = 0; col < 4; col++) {
+        for (int row = 0; row < 4; row++) {
+            float s = 0.0f;
+            for (int k = 0; k < 4; k++)
+                s += a[k*4 + row] * b[col*4 + k];
+            out[col*4 + row] = s;
+        }
+    }
 }
 
 
