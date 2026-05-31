@@ -8,74 +8,94 @@
 #include <math.h>
 #include <time.h>
 
+#define INSTANCE_COUNT 4
+#define TRIANGLE_COUNT_PER_INSTANCE 2
+#define VERTEX_COUNT_PER_TRIANGLE 3
+#define VERTEX_COUNT_PER_INSTANCE 6
+#define FLOAT_COUNT_PER_VERTEX 2
+#define FLOAT_COUNT_PER_COLOR 4
+#define FLOAT_COUNT_PER_MATRIX 16
 
-struct App {
+#define VERTEX_COUNT_PER_QUAD_BATCHED 4
+#define INDEX_COUNT_PER_QUAD 6
+
+#define POSITION_LOC 0
+#define COLOR_LOC 1
+#define VIEW_LOC 2
+
+#define WORLD_W 4.0f
+#define WORLD_H 3.0f
+
+
+typedef struct App_Tag {
     GLFWwindow *window;
     int window_width;
     int window_height;
     struct timespec timer;
-};
+    int is_paused;
+} App;
 
-struct v2 {
+typedef struct v2_Tag {
     float x;
     float y;
-};
+} v2;
 
-struct v4 {
+typedef struct c4_Tag {
     float r;
     float g;
     float b;
     float a;
-};
+} c4;
 
-struct d2 {
+typedef struct d2_Tag {
     float w;
     float h;
-};
+} d2;
 
-struct Player {
-    struct v2 position;
-    struct d2 dimension;
-    struct v4 color;
+typedef struct Entity_Tag {
+    // physics
+    v2 position;
+    float rotation;
+    v2 scale;
+    d2 dimension;
+    v2 direction;
+    float velocity;
+    // rendering
     float transform[16];
-    int velocity;
+    c4 colors[4];
     unsigned int ebo_offset;
-};
+} Entity;
 
-struct Background {
-    struct v2 position;
-    struct d2 dimension;
-    struct v4 color;
+typedef struct Quad_Batched_Tag {
+    // physics
+    v2 pos;
+    float rotation;
+    v2 sca;
+    d2 dim;
+    v2 dir;
+    float velocity;
+    // rendering
     float transform[16];
+    c4 colors[4];
     unsigned int ebo_offset;
-};
+} Quad_Batched;
 
-struct Ball {
-    struct v2 position;
-    struct d2 dimension;
-    struct v4 color;
-    float transform[16];
-    int velocity;
-    unsigned int ebo_offset;
-};
+typedef struct Geometry_Tag {
+    GLfloat *vertices;          // vertices shared for all instances
+    GLuint *indices;            // vertex indices
+    GLfloat *vertex_data;       // vertices data per instance, color, etc
+    GLfloat *instance_data;     // instance data, matrix, etc
+    size_t vertex_data_count;
+    size_t instance_data_count;
+} Geometry;
 
-struct Geometry {
-    GLfloat *data;
-    GLuint *indices;
-    size_t data_count;
-    size_t indices_count;
-};
 
-struct App app;
-struct Player player1;
-struct Player player2;
-struct Ball ball;
-struct Background background;
-
-#define NUM_ENTITIES 4
-GLfloat data[NUM_ENTITIES * 4 * (2 + 4)]; // num_ent * num_vert_per_ent * (num_float_per_vert + num_float_per_color)
-GLuint indices[NUM_ENTITIES * 6];   // num_ent * 2 triangles (6 indices)
-struct Geometry geometry = { data, indices, 0, 0 }; 
+typedef struct Geometry_Batched_Tag {
+    GLfloat *vertex_data;   // vertices data per instance, color, etc
+    GLuint *index_data;     // vertex indices
+    size_t vertex_count;
+    size_t index_count;
+} Geometry_Batched;
 
 
 static char *read_file(const char *path) {
@@ -102,7 +122,7 @@ static GLuint shader_compile(GLenum type, const char *src) {
 
 static void window_onresize(GLFWwindow *win, int width, int height) {
 
-    float target = 4.0f / 3.0f;
+    float target = WORLD_W / WORLD_H;
     float actual = (float)width / (float)height;
     int vw, vh, vx, vy;
     if (actual > target) {
@@ -118,7 +138,6 @@ static void window_onresize(GLFWwindow *win, int width, int height) {
     }
     glViewport(vx, vy, vw, vh);
 }
-
 
 GLFWwindow *window_create(void) {
 
@@ -136,7 +155,6 @@ GLFWwindow *window_create(void) {
     return win;
 }
 
-
 void window_destroy(GLFWwindow *win) {
 
     glfwDestroyWindow(win);
@@ -144,33 +162,116 @@ void window_destroy(GLFWwindow *win) {
 }
 
 
-unsigned int geometry_append_quad(struct Geometry *geo, struct d2 dim, struct v4 color) {
+void geometry_init(Geometry *geo) {
 
-    // assumes 2 floats for 2d position
-    GLfloat *data = geo->data + geo->data_count * (2 + 4);
-    GLuint *indices = geo->indices + geo->indices_count;
+    GLfloat *data = geo->vertices;
+    // GLuint *indices = geo->indices;
+    d2 dim = { .w=1, .h=1 };
 
-    data[0] = -dim.w / 2.0f;    data[1] = -dim.h / 2.0f;   // top-left     0
-    data[2] = color.r; data[3] = color.g; data[4] = color.b; data[5] = color.a;
+    data[0] = -dim.w / 2.0f; data[1] = -dim.h / 2.0f;     // top-left     0
+    data[2] =  dim.w / 2.0f; data[3] = -dim.h / 2.0f;     // top-right    1
+    data[4] =  dim.w / 2.0f; data[5] =  dim.h / 2.0f;     // bottom-right 2
 
-    data[6] =  dim.w / 2.0f;    data[7] = -dim.h / 2.0f;   // top-right    1
-    data[8] = color.r; data[9] = color.g; data[10] = color.b; data[11] = color.a;
+    data[6] =  -dim.w / 2.0f; data[7] =   dim.h / 2.0f;   // bottom-left  3
+    data[8] =   dim.w / 2.0f; data[9] =   dim.h / 2.0f;   // bottom-right 2
+    data[10] = -dim.w / 2.0f; data[11] = -dim.h / 2.0f;   // top-left     0
 
-    data[12] =  dim.w / 2.0f;   data[13] = dim.h / 2.0f;   // bottom-right 2
-    data[14] = color.r; data[15] = color.g; data[16] = color.b; data[17] = color.a;
+    // indices[0] = 0; indices[1] = 1; indices[2] = 2;
+    // indices[3] = 3; indices[4] = 2; indices[5] = 0;
+}
 
-    data[18] = -dim.w / 2.0f;   data[19] = dim.h / 2.0f;  // bottom-left  3
-    data[20] = color.r; data[21] = color.g; data[22] = color.b; data[23] = color.a;
+void geometry_batched_init(Geometry_Batched *geo) {
+    geo->vertex_count = 0;
+    geo->index_count = 0;
+}
 
-    GLuint offset = geo->data_count;
-    indices[0] = 0 + offset; indices[1] = 1 + offset; indices[2] = 2 + offset;
-    indices[3] = 3 + offset; indices[4] = 2 + offset; indices[5] = 0 + offset;
+void geometry_batched_append(Geometry_Batched *geo, const Quad_Batched *quad) {
+
+    GLfloat *data = geo->vertex_data + geo->vertex_count * (FLOAT_COUNT_PER_VERTEX + FLOAT_COUNT_PER_COLOR + FLOAT_COUNT_PER_MATRIX);
+    d2 *dim = &quad->dim;
+    c4 *colors = quad->colors;
+
+    int i = 0;
+    // top-left
+    data[i++] = -dim->w / 2.0f; data[i++] = -dim->h / 2.0f;
+    data[i++] = colors[0].r; data[i++] = colors[0].g; data[i++] = colors[0].b; data[i++] = colors[0].a;
+    for(int j=0; j<FLOAT_COUNT_PER_MATRIX; j++) {
+        data[i++] = quad->transform[j];
+    }
+    // top-right
+    data[i++] = dim->w / 2.0f; data[i++] = -dim->h / 2.0f;
+    data[i++] = colors[1].r; data[i++] = colors[1].g; data[i++] = colors[1].b; data[i++] = colors[1].a;
+    for(int j=0; j<FLOAT_COUNT_PER_MATRIX; j++) {
+        data[i++] = quad->transform[j];
+    }
+    // bottom-right
+    data[i++] = dim->w / 2.0f; data[i++] =  dim->h / 2.0f;
+    data[i++] = colors[2].r; data[i++] = colors[2].g; data[i++] = colors[2].b; data[i++] = colors[2].a;
+    for(int j=0; j<FLOAT_COUNT_PER_MATRIX; j++) {
+        data[i++] = quad->transform[j];
+    }
+    // bottom-left
+    data[i++] = -dim->w / 2.0f; data[i++] = dim->h / 2.0f;
+    data[i++] = colors[3].r; data[i++] = colors[3].g; data[i++] = colors[3].b; data[i++] = colors[3].a;
+    for(int j=0; j<FLOAT_COUNT_PER_MATRIX; j++) {
+        data[i++] = quad->transform[j];
+    }
+
+    GLuint base = geo->vertex_count;
+    GLuint *indices = geo->index_data + geo->index_count;
+    indices[0] = base + 0; indices[1] = base + 1; indices[2] = base + 2;
+    indices[3] = base + 3; indices[4] = base + 2; indices[5] = base + 0;
+
+    geo->vertex_count += VERTEX_COUNT_PER_QUAD_BATCHED;
+    geo->index_count += INDEX_COUNT_PER_QUAD;
+}
+
+void geometry_vertex_data_append(Geometry *geo, const c4 *color) {
+
+    GLfloat *data = geo->vertex_data + geo->vertex_data_count * FLOAT_COUNT_PER_COLOR;
+
+    // 6 vertices * 4 colors
+    data[0]  = color->r; data[1]  = color->g; data[2]  = color->b; data[3]  = color->a;
+    data[4]  = color->r; data[5]  = color->g; data[6]  = color->b; data[7]  = color->a;
+    data[8]  = color->r; data[9]  = color->g; data[10] = color->b; data[11] = color->a;
+
+    data[12] = color->r; data[13] = color->g; data[14] = color->b; data[15] = color->a;
+    data[16] = color->r; data[17] = color->g; data[18] = color->b; data[19] = color->a;
+    data[20] = color->r; data[21] = color->g; data[22] = color->b; data[23] = color->a;
+
+    geo->vertex_data_count += VERTEX_COUNT_PER_INSTANCE;
+}
+
+unsigned int geometry_interleave_vertex_data(Geometry *geo, const c4 *color, const c4 *color2) {
+
+    // assumes 4 floats for color, 16 float for matrix
+    // GLfloat *data = geo->data + geo->data_count * (4 + 16);
+
+    // data[0] = color.r;  data[3] = color.g; data[4] = color.b; data[5] = color.a;
+    // data[8] = color.r; data[9] = color.g; data[10] = color.b; data[11] = color.a;
+    // data[14] = color.r; data[15] = color.g; data[16] = color.b; data[17] = color.a;
+    // data[20] = color.r; data[21] = color.g; data[22] = color.b; data[23] = color.a;
+
+    // GLuint offset = geo->data_count;
+    // indices[0] = 0 + offset; indices[1] = 1 + offset; indices[2] = 2 + offset;
+    // indices[3] = 3 + offset; indices[4] = 2 + offset; indices[5] = 0 + offset;
     
-    unsigned int byte_offset = geo->indices_count * sizeof(GLuint);
-    geo->data_count += 4;
-    geo->indices_count += 6;
+    // unsigned int byte_offset = geo->indices_count * sizeof(GLuint);
+    // geo->data_count += 4;
+    // geo->indices_count += 6;
 
-    return byte_offset;
+    // return byte_offset;
+    return 0;
+}
+
+void geometry_instance_data_append(Geometry *geo, const float mat[16]) {
+
+    GLfloat *data = geo->instance_data + geo->instance_data_count * FLOAT_COUNT_PER_MATRIX;
+
+    for(int i=0; i<FLOAT_COUNT_PER_MATRIX; i++) {
+        data[i] = mat[i];
+    }
+    geo->instance_data_count++;
 }
 
 
@@ -182,7 +283,6 @@ void mat4_identity(float m[16]) {
     m[12] = 0.0f; m[13] = 0.0f; m[14] = 0.0f; m[15] = 1.0f;
 }
 
-
 void mat4_translate(float m[16], float tx, float ty) {
 
     m[0] =  1.0f; m[1] =  0.0f; m[2] =  0.0f; m[3] =  0.0f;
@@ -190,7 +290,6 @@ void mat4_translate(float m[16], float tx, float ty) {
     m[8] =  0.0f; m[9] =  0.0f; m[10] = 1.0f; m[11] = 0.0f;
     m[12] = tx;   m[13] = ty;   m[14] = 0.0f; m[15] = 1.0f;
 }
-
 
 void mat4_scale(float m[16], float sx, float sy) {
 
@@ -200,15 +299,13 @@ void mat4_scale(float m[16], float sx, float sy) {
     m[12] = 0.0f; m[13] = 0.0f; m[14] = 0.0f; m[15] = 1.0f;
 }
 
-
 void mat4_rotate(float m[16], float rz) {
 
-    m[0] =  cos(rz); m[1] = -sin(rz); m[2] =  0.0f; m[3] =  0.0f;
-    m[4] =  sin(rz); m[5] =  cos(rz); m[6] =  0.0f; m[7] =  0.0f;
-    m[8] =  0.0f;    m[9] =  0.0f;    m[10] = 1.0f; m[11] = 0.0f;
-    m[12] = 0.0f;    m[13] = 0.0f;    m[14] = 0.0f; m[15] = 1.0f;
+    m[0] =  cosf(rz); m[1] = -sinf(rz); m[2] =  0.0f; m[3] =  0.0f;
+    m[4] =  sinf(rz); m[5] =  cosf(rz); m[6] =  0.0f; m[7] =  0.0f;
+    m[8] =  0.0f;     m[9] =  0.0f;     m[10] = 1.0f; m[11] = 0.0f;
+    m[12] = 0.0f;     m[13] = 0.0f;     m[14] = 0.0f; m[15] = 1.0f;
 }
-
 
 void mat4_mul(float out[16], float a[16], float b[16]) {
 
@@ -222,56 +319,96 @@ void mat4_mul(float out[16], float a[16], float b[16]) {
     }
 }
 
+void mat4_trs(float m[16], float tx, float ty, float rz, float sx, float sy) {
+    float c = cosf(rz), s = sinf(rz);
+    m[0] = sx*c;  m[1] = -sx*s; m[2] =  0.0f; m[3] =  0.0f;
+    m[4] = sy*s;  m[5] =  sy*c; m[6] =  0.0f; m[7] =  0.0f;
+    m[8] = 0.0f;  m[9] =  0.0f; m[10] = 1.0f; m[11] = 0.0f;
+    m[12] = tx;   m[13] = ty;   m[14] = 0.0f; m[15] = 1.0f;
+}
+
 
 int main() {
 
+
+    c4 magenta = { .r = 1.0f, .g = 0.0f, .b = 1.0f, .a = 1.0f };
+    c4 red = { .r = 1.0f, .g = 0.0f, .b = 0.0f, .a = 1.0f };
+    c4 gray = { .r = 0.3f, .g = 0.3f, .b = 0.3f, .a = 1.0f };
+
+
+    App app;
+    Quad_Batched player1 = { 
+        .pos.x = 0.2f, .pos.y = 1.5f,
+        .dim.w = 0.15f, .dim.h = 0.6f,
+        .rotation = 0.0f,
+        .sca.x = 1.0f, .sca.y = 1.0f,
+        .dir.x = 0.0f, .dir.y = 1.0f,
+        .colors = { magenta, magenta, magenta, magenta },
+        .velocity = 1.0f,
+    };
+
+    Quad_Batched player2 = { 
+        .pos.x = WORLD_W - 0.15f - 0.2f, .pos.y = 1.5f,
+        .dim.w = 0.15f, .dim.h = 0.6f,
+        .rotation = 0.0f,
+        .sca.x = 1.0f, .sca.y = 1.0f,
+        .dir.x = 0.0f, .dir.y = 1.0f,
+        .colors = { magenta, magenta, magenta, magenta },
+        .velocity = 1.0f,
+    };
+
+    Quad_Batched ball = { 
+        .pos.x = WORLD_W / 2.0f, .pos.y = WORLD_H /  2.0f,
+        .dim.w = 0.15f, .dim.h = 0.15f,
+        .rotation = 0.0f,
+        .sca.x = 1.0f, .sca.y = 1.0f,
+        .dir.x = 0.0f, .dir.y = 1.0f,
+        .colors = { red, red, red, red },
+        .velocity = 0.1f,
+    };
+    float ball_scale_factor = 1.0f;
+    float ball_scale_max = 3.0f;
+    float ball_scale_min = 0.5f;
+
+    Quad_Batched background = {
+        .pos.x = WORLD_W / 2.0f, .pos.y = WORLD_H /  2.0f,
+        .dim.w = WORLD_W, .dim.h = WORLD_H,
+        .rotation = 0.0f,
+        .sca.x = 1.0f, .sca.y = 1.0f,
+        .dir.x = 0.0f, .dir.y = 0.0f,
+        .colors = { gray, gray, gray, gray },
+        .velocity = 0.0f,
+    };
+
+    // for instance rendering
+    // GLfloat vertices[VERTEX_COUNT_PER_INSTANCE * FLOAT_COUNT_PER_VERTEX];
+    // GLfloat instance_data[INSTANCE_COUNT * FLOAT_COUNT_PER_MATRIX];
+    // Geometry geometry = { vertices, indices, vertex_data, instance_data, 0, 0 };
+    // geometry_init(&geometry);
+    
+    GLfloat vertex_data[INSTANCE_COUNT * VERTEX_COUNT_PER_QUAD_BATCHED * (FLOAT_COUNT_PER_VERTEX + FLOAT_COUNT_PER_COLOR + FLOAT_COUNT_PER_MATRIX)];
+    GLuint index_data[INSTANCE_COUNT * INDEX_COUNT_PER_QUAD];
+    Geometry_Batched geometry_batched = { .vertex_data = vertex_data, .index_data = index_data, .vertex_count = 0, .index_count = 0 };
+    geometry_batched_append(&geometry_batched, &background);
+    geometry_batched_append(&geometry_batched, &player1);
+    geometry_batched_append(&geometry_batched, &player2);
+    geometry_batched_append(&geometry_batched, &ball);
+
+
+    float proj_m[16];
+    float scale_m[16];
+    float trans_m[16];
+    mat4_scale(scale_m, 2.0f / 4.0f, 2.0f / 3.0f);
+    mat4_translate(trans_m, -1.0f, -1.0f);
+    mat4_mul(proj_m, trans_m, scale_m); // T * S * vertex
+
+
     app.window = window_create();
     if (!app.window) return 1;
+    app.is_paused = 1;
 
     glfwGetFramebufferSize(app.window, &app.window_width, &app.window_height);
     window_onresize(app.window, app.window_width, app.window_height);
-
-    player1.position = (struct v2) { .x = 0.2f, .y = 1.5f };
-    player1.dimension = (struct d2) { .w = 0.15f, .h = 0.6f };
-    player1.color = (struct v4) { .r = 1.0f, .g = 0.0f, .b = 1.0f, .a = 1.0f };
-    player1.velocity = 1;
-
-    player2.position = (struct v2) { .x = 4 - 0.15f - 0.2f, .y = 1.5f };
-    player2.dimension = (struct d2) { .w = 0.15f, .h = 0.6f };
-    player2.color = (struct v4) { .r = 1.0f, .g = 0.0f, .b = 1.0f, .a = 1.0f };
-    player2.velocity = 1;
-
-    background.position = (struct v2) { .x = 4.0f / 2.0f, .y = 3.0f / 2.0f };
-    background.dimension = (struct d2) { .w = 4.0f, .h = 3.0f };
-    background.color = (struct v4) { .r = 0.6f, .g = 1.0f, .b = 0.8f, .a = 1.0f };
-
-    ball.position = (struct v2) { .x = 4.0f / 2.0f, .y = 3.0f / 2.0f };
-    ball.dimension = (struct d2) { .w = 0.15f, .h = 0.15f };
-    ball.color = (struct v4) { .r = 1.0f, .g = 0.0f, .b = 0.0f, .a = 1.0f };
-    ball.velocity = 1;
-
-    background.ebo_offset = geometry_append_quad(&geometry, background.dimension, background.color);
-    player1.ebo_offset = geometry_append_quad(&geometry, player1.dimension, player1.color);
-    player2.ebo_offset = geometry_append_quad(&geometry, player2.dimension, player2.color);
-    ball.ebo_offset = geometry_append_quad(&geometry, ball.dimension, ball.color);
-
-    GLuint vao, vbo, ebo;
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
-
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(data), data, GL_STATIC_DRAW);
-
-    glGenBuffers(1, &ebo);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *) 0);
-    glEnableVertexAttribArray(0);
-
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *) (sizeof(float) * 2));
-    glEnableVertexAttribArray(1);
 
     // create shader program
     char *vert_src = read_file("vert.glsl");
@@ -288,41 +425,65 @@ int main() {
     glDeleteShader(vs);
     glDeleteShader(fs);
 
-    // orthographic projection for world space [0,4] x [0,3]
-    float proj[16] = {
-        0.5f,   0.0f,       0.0f, 0.0f,
-        0.0f,   2.0f/3.0f,  0.0f, 0.0f,
-        0.0f,   0.0f,      -1.0f, 0.0f,
-       -1.0f,  -1.0f,       0.0f, 1.0f,
-    };
     glUseProgram(prog);
-    GLint proj_loc  = glGetUniformLocation(prog, "proj");
-    GLint model_loc = glGetUniformLocation(prog, "model");
-    glUniformMatrix4fv(proj_loc, 1, GL_FALSE, proj);
+    GLint proj_loc = glGetUniformLocation(prog, "proj");
 
-    mat4_identity(background.transform);
-    mat4_translate(background.transform, background.position.x, background.position.y);
+    GLuint vao;
+    // for instanced rendering
+    GLuint vbo_vertices;
+    GLuint vbo_instance_data;
+    // for batched rendering
+    GLuint vbo_vertex_data;
+    GLuint ebo;
 
-    float player1_model[16] = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        player1.position.x, player1.position.y, 0.0f, 1.0f,
-    };
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
 
-    float player2_model[16] = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        player2.position.x, player2.position.y, 0.0f, 1.0f,
-    };
+    // for batch rendering
+    glGenBuffers(1, &ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(index_data), geometry_batched.index_data, GL_STATIC_DRAW);
 
-    float ball_model[16] = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        ball.position.x, ball.position.y, 0.0f, 1.0f,
-    };
+    glGenBuffers(1, &vbo_vertex_data);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_vertex_data);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertex_data), geometry_batched.vertex_data, GL_DYNAMIC_DRAW);
+
+    GLsizei stride = (FLOAT_COUNT_PER_VERTEX + FLOAT_COUNT_PER_COLOR + FLOAT_COUNT_PER_MATRIX) * sizeof(GLfloat);
+    glVertexAttribPointer(POSITION_LOC, 2, GL_FLOAT, GL_FALSE, stride, (void*)(0));
+    glEnableVertexAttribArray(POSITION_LOC);
+    glVertexAttribPointer(COLOR_LOC, 4, GL_FLOAT, GL_FALSE, stride, (void*)(FLOAT_COUNT_PER_VERTEX * sizeof(GLfloat)));
+    glEnableVertexAttribArray(COLOR_LOC);
+    for (int i = 0; i < 4; i++) {
+        glVertexAttribPointer(VIEW_LOC + i, 4, GL_FLOAT, GL_FALSE, stride, (void*)((FLOAT_COUNT_PER_VERTEX + FLOAT_COUNT_PER_COLOR + i*4) * sizeof(GLfloat)));
+        glEnableVertexAttribArray(VIEW_LOC + i);
+    }
+
+    // for instanced rendering
+    // glGenBuffers(1, &vbo_vertices);
+    // glBindBuffer(GL_ARRAY_BUFFER, vbo_vertices);
+    // glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    // glVertexAttribPointer(POSITION_LOC, 2, GL_FLOAT, GL_FALSE, sizeof(v2), 0);
+    // glEnableVertexAttribArray(POSITION_LOC);
+
+    // glGenBuffers(1, &vbo_instance_data);
+    // glBindBuffer(GL_ARRAY_BUFFER, vbo_instance_data);
+    // glBufferData(GL_ARRAY_BUFFER, sizeof(instance_data), instance_data, GL_DYNAMIC_DRAW);
+
+    // needed as maximum size of a slot is vec4
+    // for(int i = 0; i < 4; i++) {
+    //     glVertexAttribPointer(VIEW_LOC + i, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(float), (void*)(i * 4 * sizeof(float)));
+    //     glVertexAttribDivisor(VIEW_LOC + i, 1);
+    //     glEnableVertexAttribArray(VIEW_LOC + i);
+    // }
+
+    glUniformMatrix4fv(proj_loc, 1, GL_FALSE, proj_m);
+
+
+    // so far only 1 progam and 1 vao for the whole game
+    glUseProgram(prog);
+    glBindVertexArray(vao);
+
 
     while (!glfwWindowShouldClose(app.window)) {
 
@@ -334,58 +495,109 @@ int main() {
 
         // inputs
         glfwPollEvents();
-        if (glfwGetKey(app.window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        if (glfwGetKey(app.window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwSetWindowShouldClose(app.window, 1);
+        }
+        if (glfwGetKey(app.window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+            app.is_paused = 0;
+            fprintf(stderr, "game p");
+        }
+
         if (glfwGetKey(app.window, GLFW_KEY_W) == GLFW_PRESS) {
-            player1.position.y += player1.velocity * dt;
+            player1.pos.y += player1.velocity * dt;
         }
         if (glfwGetKey(app.window, GLFW_KEY_S) == GLFW_PRESS) {
-            player1.position.y -= player1.velocity * dt;
+            player1.pos.y -= player1.velocity * dt;
         }
         if (glfwGetKey(app.window, GLFW_KEY_UP) == GLFW_PRESS) {
-            player2.position.y += player2.velocity * dt;
+            player2.pos.y += player2.velocity * dt;
         }
         if (glfwGetKey(app.window, GLFW_KEY_DOWN) == GLFW_PRESS) {
-            player2.position.y -= player2.velocity * dt;
+            player2.pos.y -= player2.velocity * dt;
         }
 
-        
+
         // update
-        if(player1.position.y < 0) {
-            player1.position.y = 0;
-        }
-        if(player1.position.y + player1.dimension.h > 3) {
-            player1.position.y = 3 - player1.dimension.h;
-        }
-        player1_model[13] = player1.position.y;
+        mat4_trs(   background.transform, 
+                    background.pos.x, background.pos.y,
+                    background.rotation,
+                    background.dim.w, background.dim.h );
 
-        if(player2.position.y < 0) {
-            player2.position.y = 0;
+        if(player1.pos.y - player1.dim.h / 2.0f < 0) {
+            player1.pos.y = player1.dim.h / 2.0f;
         }
-        if(player2.position.y + player2.dimension.h > 3) {
-            player2.position.y = 3 - player2.dimension.h;
+        if(player1.pos.y + player1.dim.h / 2.0f > 3) {
+            player1.pos.y = 3 - player1.dim.h / 2.0f;
         }
-        player2_model[13] = player2.position.y;
+        mat4_trs(   player1.transform, 
+                    player1.pos.x, player1.pos.y,
+                    player1.rotation,
+                    player1.dim.w, player1.dim.h );
+
+        if(player2.pos.y - player2.dim.h / 2.0f < 0) {
+            player2.pos.y = player2.dim.h / 2.0f;
+        }
+        if(player2.pos.y + player2.dim.h / 2.0f > 3) {
+            player2.pos.y = 3 - player2.dim.h / 2.0f;
+        }
+        mat4_trs(   player2.transform, 
+                    player2.pos.x, player2.pos.y,
+                    player2.rotation,
+                    player2.dim.w, player2.dim.h );
+
+        if(app.is_paused == 0) {
+            ball.pos.x += ball.dir.x * ball.velocity;
+            ball.pos.y += ball.dir.y * ball.velocity;
+        }
+
+        ball.rotation += 0.04f;
+        ball.sca.x += ball_scale_factor * 0.01f;
+        if(ball.sca.x > ball_scale_max) {
+            ball.sca.x = ball_scale_max;
+            ball_scale_factor = -ball_scale_factor;
+        }
+        else if(ball.sca.x < ball_scale_min) {
+            ball.sca.x = ball_scale_min;
+            ball_scale_factor = -ball_scale_factor;
+        }
+        ball.sca.y = ball.sca.x;
+
+        mat4_trs(ball.transform, ball.pos.x, ball.pos.y, ball.rotation, ball.sca.x, ball.sca.y);
 
 
         // render
         glClearColor(0.1f, 0.0f, 0.1f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        glUseProgram(prog);
-        glBindVertexArray(vao);
+        // upload the new color data
+        geometry_batched.vertex_count = 0;
+        geometry_batched.index_count = 0;
+        geometry_batched_append(&geometry_batched, &background);
+        geometry_batched_append(&geometry_batched, &player1);
+        geometry_batched_append(&geometry_batched, &player2);
+        geometry_batched_append(&geometry_batched, &ball);
 
-        glUniformMatrix4fv(model_loc, 1, GL_FALSE, background.transform);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) background.ebo_offset);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_vertex_data);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertex_data), geometry_batched.vertex_data);
 
-        glUniformMatrix4fv(model_loc, 1, GL_FALSE, player1_model);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) player1.ebo_offset);
+        glDrawElements(GL_TRIANGLES, INSTANCE_COUNT * INDEX_COUNT_PER_QUAD, GL_UNSIGNED_INT, 0);
 
-        glUniformMatrix4fv(model_loc, 1, GL_FALSE, player2_model);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) player2.ebo_offset);
+        // for instance rendering
+        // glBindBuffer(GL_ARRAY_BUFFER, vbo_vertex_data);
+        // glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertex_data), geometry.vertex_data);
 
-        glUniformMatrix4fv(model_loc, 1, GL_FALSE, ball_model);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (GLvoid *) ball.ebo_offset);
+        // // upload the new matrix data
+        // geometry.instance_data_count = 0;
+        // geometry_instance_data_append(&geometry, background.transform);
+        // geometry_instance_data_append(&geometry, player1.transform);
+        // geometry_instance_data_append(&geometry, player2.transform);
+        // geometry_instance_data_append(&geometry, ball.transform);
+
+        // glBindBuffer(GL_ARRAY_BUFFER, vbo_instance_data);
+        // glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(instance_data), geometry.instance_data);
+
+        // glDrawArraysInstanced(GL_TRIANGLES, 0, VERTEX_COUNT_PER_INSTANCE, INSTANCE_COUNT);
+
 
         glfwSwapBuffers(app.window);
     }

@@ -4,5 +4,6 @@
       "Bash(bash build.sh*)",
       "Bash(bash run.sh*)"
     ]
-  }
+  },
+  "autoMemoryDirectory": "/media/data/dev2/pong/memory/"
 }
