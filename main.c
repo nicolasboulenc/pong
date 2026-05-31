@@ -98,7 +98,7 @@ typedef struct Geometry_Batched_Tag {
 } Geometry_Batched;
 
 
-static char *read_file(const char *path) {
+char *read_file(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "cannot open %s\n", path); return NULL; }
     fseek(f, 0, SEEK_END);
@@ -112,7 +112,7 @@ static char *read_file(const char *path) {
 }
 
 
-static GLuint shader_compile(GLenum type, const char *src) {
+GLuint shader_compile(GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, NULL);
     glCompileShader(s);
@@ -120,7 +120,7 @@ static GLuint shader_compile(GLenum type, const char *src) {
 }
 
 
-static void window_onresize(GLFWwindow *win, int width, int height) {
+void window_onresize(GLFWwindow *win, int width, int height) {
 
     float target = WORLD_W / WORLD_H;
     float actual = (float)width / (float)height;
@@ -188,8 +188,8 @@ void geometry_batched_init(Geometry_Batched *geo) {
 void geometry_batched_append(Geometry_Batched *geo, const Quad_Batched *quad) {
 
     GLfloat *data = geo->vertex_data + geo->vertex_count * (FLOAT_COUNT_PER_VERTEX + FLOAT_COUNT_PER_COLOR + FLOAT_COUNT_PER_MATRIX);
-    d2 *dim = &quad->dim;
-    c4 *colors = quad->colors;
+    const d2 *dim = &quad->dim;
+    const c4 *colors = quad->colors;
 
     int i = 0;
     // top-left
@@ -240,28 +240,6 @@ void geometry_vertex_data_append(Geometry *geo, const c4 *color) {
     data[20] = color->r; data[21] = color->g; data[22] = color->b; data[23] = color->a;
 
     geo->vertex_data_count += VERTEX_COUNT_PER_INSTANCE;
-}
-
-unsigned int geometry_interleave_vertex_data(Geometry *geo, const c4 *color, const c4 *color2) {
-
-    // assumes 4 floats for color, 16 float for matrix
-    // GLfloat *data = geo->data + geo->data_count * (4 + 16);
-
-    // data[0] = color.r;  data[3] = color.g; data[4] = color.b; data[5] = color.a;
-    // data[8] = color.r; data[9] = color.g; data[10] = color.b; data[11] = color.a;
-    // data[14] = color.r; data[15] = color.g; data[16] = color.b; data[17] = color.a;
-    // data[20] = color.r; data[21] = color.g; data[22] = color.b; data[23] = color.a;
-
-    // GLuint offset = geo->data_count;
-    // indices[0] = 0 + offset; indices[1] = 1 + offset; indices[2] = 2 + offset;
-    // indices[3] = 3 + offset; indices[4] = 2 + offset; indices[5] = 0 + offset;
-    
-    // unsigned int byte_offset = geo->indices_count * sizeof(GLuint);
-    // geo->data_count += 4;
-    // geo->indices_count += 6;
-
-    // return byte_offset;
-    return 0;
 }
 
 void geometry_instance_data_append(Geometry *geo, const float mat[16]) {
@@ -330,11 +308,9 @@ void mat4_trs(float m[16], float tx, float ty, float rz, float sx, float sy) {
 
 int main() {
 
-
-    c4 magenta = { .r = 1.0f, .g = 0.0f, .b = 1.0f, .a = 1.0f };
-    c4 red = { .r = 1.0f, .g = 0.0f, .b = 0.0f, .a = 1.0f };
-    c4 gray = { .r = 0.3f, .g = 0.3f, .b = 0.3f, .a = 1.0f };
-
+    c4 magenta  = { .r = 1.0f, .g = 0.2f, .b = 1.0f, .a = 1.0f };
+    c4 red      = { .r = 1.0f, .g = 0.2f, .b = 0.2f, .a = 1.0f };
+    c4 gray     = { .r = 0.3f, .g = 0.3f, .b = 0.3f, .a = 1.0f };
 
     App app;
     Quad_Batched player1 = { 
@@ -344,7 +320,7 @@ int main() {
         .sca.x = 1.0f, .sca.y = 1.0f,
         .dir.x = 0.0f, .dir.y = 1.0f,
         .colors = { magenta, magenta, magenta, magenta },
-        .velocity = 1.0f,
+        .velocity = 1.2f,
     };
 
     Quad_Batched player2 = { 
@@ -354,7 +330,7 @@ int main() {
         .sca.x = 1.0f, .sca.y = 1.0f,
         .dir.x = 0.0f, .dir.y = 1.0f,
         .colors = { magenta, magenta, magenta, magenta },
-        .velocity = 1.0f,
+        .velocity = 1.2f,
     };
 
     Quad_Batched ball = { 
@@ -366,9 +342,6 @@ int main() {
         .colors = { red, red, red, red },
         .velocity = 0.1f,
     };
-    float ball_scale_factor = 1.0f;
-    float ball_scale_max = 3.0f;
-    float ball_scale_min = 0.5f;
 
     Quad_Batched background = {
         .pos.x = WORLD_W / 2.0f, .pos.y = WORLD_H /  2.0f,
@@ -430,18 +403,18 @@ int main() {
 
     GLuint vao;
     // for instanced rendering
-    GLuint vbo_vertices;
-    GLuint vbo_instance_data;
+    // GLuint vbo_vertices;
+    // GLuint vbo_instance_data;
     // for batched rendering
     GLuint vbo_vertex_data;
-    GLuint ebo;
+    GLuint ebo_index_data;
 
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
 
     // for batch rendering
-    glGenBuffers(1, &ebo);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glGenBuffers(1, &ebo_index_data);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_index_data);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(index_data), geometry_batched.index_data, GL_STATIC_DRAW);
 
     glGenBuffers(1, &vbo_vertex_data);
@@ -521,29 +494,29 @@ int main() {
         mat4_trs(   background.transform, 
                     background.pos.x, background.pos.y,
                     background.rotation,
-                    background.dim.w, background.dim.h );
+                    background.sca.x, background.sca.y );
 
         if(player1.pos.y - player1.dim.h / 2.0f < 0) {
             player1.pos.y = player1.dim.h / 2.0f;
         }
-        if(player1.pos.y + player1.dim.h / 2.0f > 3) {
-            player1.pos.y = 3 - player1.dim.h / 2.0f;
+        if(player1.pos.y + player1.dim.h / 2.0f > WORLD_H) {
+            player1.pos.y = WORLD_H - player1.dim.h / 2.0f;
         }
         mat4_trs(   player1.transform, 
                     player1.pos.x, player1.pos.y,
                     player1.rotation,
-                    player1.dim.w, player1.dim.h );
+                    player1.sca.x, player1.sca.y );
 
         if(player2.pos.y - player2.dim.h / 2.0f < 0) {
             player2.pos.y = player2.dim.h / 2.0f;
         }
-        if(player2.pos.y + player2.dim.h / 2.0f > 3) {
-            player2.pos.y = 3 - player2.dim.h / 2.0f;
+        if(player2.pos.y + player2.dim.h / 2.0f > WORLD_H) {
+            player2.pos.y = WORLD_H - player2.dim.h / 2.0f;
         }
         mat4_trs(   player2.transform, 
                     player2.pos.x, player2.pos.y,
                     player2.rotation,
-                    player2.dim.w, player2.dim.h );
+                    player2.sca.x, player2.sca.y );
 
         if(app.is_paused == 0) {
             ball.pos.x += ball.dir.x * ball.velocity;
@@ -551,17 +524,6 @@ int main() {
         }
 
         ball.rotation += 0.04f;
-        ball.sca.x += ball_scale_factor * 0.01f;
-        if(ball.sca.x > ball_scale_max) {
-            ball.sca.x = ball_scale_max;
-            ball_scale_factor = -ball_scale_factor;
-        }
-        else if(ball.sca.x < ball_scale_min) {
-            ball.sca.x = ball_scale_min;
-            ball_scale_factor = -ball_scale_factor;
-        }
-        ball.sca.y = ball.sca.x;
-
         mat4_trs(ball.transform, ball.pos.x, ball.pos.y, ball.rotation, ball.sca.x, ball.sca.y);
 
 
