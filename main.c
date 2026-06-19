@@ -27,14 +27,6 @@
 #define WORLD_H 3.0f
 
 
-typedef struct App_Tag {
-    GLFWwindow *window;
-    int window_width;
-    int window_height;
-    struct timespec timer;
-    int is_paused;
-} App;
-
 typedef struct v2_Tag {
     float x;
     float y;
@@ -51,6 +43,15 @@ typedef struct d2_Tag {
     float w;
     float h;
 } d2;
+
+typedef struct App_Tag {
+    GLFWwindow *window;
+    int window_width;
+    int window_height;
+    struct timespec timer;
+    d2 viewport;
+    int is_paused;
+} App;
 
 typedef struct Entity_Tag {
     // physics
@@ -89,13 +90,27 @@ typedef struct Geometry_Tag {
     size_t instance_data_count;
 } Geometry;
 
-
 typedef struct Geometry_Batched_Tag {
     GLfloat *vertex_data;   // vertices data per instance, color, etc
     GLuint *index_data;     // vertex indices
     size_t vertex_count;
     size_t index_count;
 } Geometry_Batched;
+
+typedef struct Wall_Tag {
+    v2 a;
+    v2 b;
+    v2 normal;
+} Wall;
+
+App app = {
+    .is_paused = 1,
+    .viewport.w = 1920,
+    .viewport.h = 1080
+};
+
+
+
 
 
 char *read_file(const char *path) {
@@ -122,7 +137,7 @@ GLuint shader_compile(GLenum type, const char *src) {
 
 void window_onresize(GLFWwindow *win, int width, int height) {
 
-    float target = WORLD_W / WORLD_H;
+    float target = (float)WORLD_W / (float)WORLD_H;
     float actual = (float)width / (float)height;
     int vw, vh, vx, vy;
     if (actual > target) {
@@ -130,12 +145,15 @@ void window_onresize(GLFWwindow *win, int width, int height) {
         vw = (int)(height * target);
         vx = (width - vw) / 2; 
         vy = 0;
-    } else {
+    } 
+    else {
         vw = width; 
         vh = (int)(width / target);
         vx = 0; 
         vy = (height - vh) / 2;
     }
+    app.viewport.w = roundf(vw);
+    app.viewport.h = roundf(vh);
     glViewport(vx, vy, vw, vh);
 }
 
@@ -306,14 +324,43 @@ void mat4_trs(float m[16], float tx, float ty, float rz, float sx, float sy) {
 }
 
 
+float dst_squared(float ax, float ay, float bx, float by) {
+    return (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
+} 
+
+
+float vec2_cross(float ax, float ay, float bx, float by) {
+    return ax * by - ay * bx;
+}
+
+float sign(float x) { 
+    return x > 0 ? 1 : x < 0 ? -1 : 0;
+}
+
+
+int segments_intersect( float ax, float ay, float bx, float by,   // segment AB
+                        float cx, float cy, float dx, float dy)   // segment CD
+{
+    // Vectors have to have the same origin for the cross product to work
+    // hence the - cx and - cy, c is chosen as origin
+    float a_side_of_cd = vec2_cross(dx-cx, dy-cy, ax-cx, ay-cy);
+    float b_side_of_cd = vec2_cross(dx-cx, dy-cy, bx-cx, by-cy);
+    float c_side_of_ab = vec2_cross(bx-ax, by-ay, cx-ax, cy-ay);
+    float d_side_of_ab = vec2_cross(bx-ax, by-ay, dx-ax, dy-ay);
+
+    if (sign(a_side_of_cd) != sign(b_side_of_cd) && sign(c_side_of_ab) != sign(d_side_of_ab))
+        return 1;
+
+    return 0;
+}
+
 int main() {
 
-    c4 magenta  = { .r = 1.0f, .g = 0.2f, .b = 1.0f, .a = 1.0f };
+    c4 magenta  = { .r = 1.0f, .g = 1.0f, .b = 1.0f, .a = 1.0f };
     c4 red      = { .r = 1.0f, .g = 0.2f, .b = 0.2f, .a = 1.0f };
-    c4 gray     = { .r = 0.3f, .g = 0.3f, .b = 0.3f, .a = 1.0f };
+    c4 gray     = { .r = 0.0f, .g = 0.0f, .b = 0.0f, .a = 1.0f };
 
-    App app;
-    Quad_Batched player1 = { 
+    Quad_Batched p1 = { 
         .pos.x = 0.2f, .pos.y = 1.5f,
         .dim.w = 0.15f, .dim.h = 0.6f,
         .rotation = 0.0f,
@@ -323,7 +370,7 @@ int main() {
         .velocity = 1.2f,
     };
 
-    Quad_Batched player2 = { 
+    Quad_Batched p2 = { 
         .pos.x = WORLD_W - 0.15f - 0.2f, .pos.y = 1.5f,
         .dim.w = 0.15f, .dim.h = 0.6f,
         .rotation = 0.0f,
@@ -338,12 +385,14 @@ int main() {
         .dim.w = 0.15f, .dim.h = 0.15f,
         .rotation = 0.0f,
         .sca.x = 1.0f, .sca.y = 1.0f,
-        .dir.x = 0.0f, .dir.y = 1.0f,
+        .dir.x = -0.4f, .dir.y = 0.6f,
         .colors = { red, red, red, red },
-        .velocity = 0.1f,
+        .velocity = 2.0f,
     };
+    float ball_radius = ball.dim.w / 2.0f;
 
-    Quad_Batched background = {
+
+    Quad_Batched bg = {
         .pos.x = WORLD_W / 2.0f, .pos.y = WORLD_H /  2.0f,
         .dim.w = WORLD_W, .dim.h = WORLD_H,
         .rotation = 0.0f,
@@ -362,9 +411,9 @@ int main() {
     GLfloat vertex_data[INSTANCE_COUNT * VERTEX_COUNT_PER_QUAD_BATCHED * (FLOAT_COUNT_PER_VERTEX + FLOAT_COUNT_PER_COLOR + FLOAT_COUNT_PER_MATRIX)];
     GLuint index_data[INSTANCE_COUNT * INDEX_COUNT_PER_QUAD];
     Geometry_Batched geometry_batched = { .vertex_data = vertex_data, .index_data = index_data, .vertex_count = 0, .index_count = 0 };
-    geometry_batched_append(&geometry_batched, &background);
-    geometry_batched_append(&geometry_batched, &player1);
-    geometry_batched_append(&geometry_batched, &player2);
+    geometry_batched_append(&geometry_batched, &bg);
+    geometry_batched_append(&geometry_batched, &p1);
+    geometry_batched_append(&geometry_batched, &p2);
     geometry_batched_append(&geometry_batched, &ball);
 
 
@@ -457,6 +506,8 @@ int main() {
     glUseProgram(prog);
     glBindVertexArray(vao);
 
+    int space_prev = GLFW_RELEASE;
+
 
     while (!glfwWindowShouldClose(app.window)) {
 
@@ -465,65 +516,93 @@ int main() {
         double dt = (tn.tv_sec - app.timer.tv_sec) + (tn.tv_nsec - app.timer.tv_nsec) * 1e-9;
         app.timer = tn;
 
-
         // inputs
         glfwPollEvents();
         if (glfwGetKey(app.window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwSetWindowShouldClose(app.window, 1);
         }
-        if (glfwGetKey(app.window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-            app.is_paused = 0;
-            fprintf(stderr, "game p");
-        }
+
+        int space_curr = glfwGetKey(app.window, GLFW_KEY_SPACE);
+        if (space_curr == GLFW_PRESS && space_prev == GLFW_RELEASE) {
+            app.is_paused = !app.is_paused;
+            fprintf(stderr, "game p\n");
+        }     
+        space_prev = space_curr;
 
         if (glfwGetKey(app.window, GLFW_KEY_W) == GLFW_PRESS) {
-            player1.pos.y += player1.velocity * dt;
+            p1.pos.y += p1.velocity * dt;
         }
         if (glfwGetKey(app.window, GLFW_KEY_S) == GLFW_PRESS) {
-            player1.pos.y -= player1.velocity * dt;
+            p1.pos.y -= p1.velocity * dt;
         }
         if (glfwGetKey(app.window, GLFW_KEY_UP) == GLFW_PRESS) {
-            player2.pos.y += player2.velocity * dt;
+            p2.pos.y += p2.velocity * dt;
         }
         if (glfwGetKey(app.window, GLFW_KEY_DOWN) == GLFW_PRESS) {
-            player2.pos.y -= player2.velocity * dt;
+            p2.pos.y -= p2.velocity * dt;
         }
 
 
         // update
-        mat4_trs(   background.transform, 
-                    background.pos.x, background.pos.y,
-                    background.rotation,
-                    background.sca.x, background.sca.y );
+        mat4_trs(bg.transform, bg.pos.x, bg.pos.y, bg.rotation, bg.sca.x, bg.sca.y);
 
-        if(player1.pos.y - player1.dim.h / 2.0f < 0) {
-            player1.pos.y = player1.dim.h / 2.0f;
+        if(p1.pos.y - p1.dim.h / 2.0f < 0) {
+            p1.pos.y = p1.dim.h / 2.0f;
         }
-        if(player1.pos.y + player1.dim.h / 2.0f > WORLD_H) {
-            player1.pos.y = WORLD_H - player1.dim.h / 2.0f;
+        if(p1.pos.y + p1.dim.h / 2.0f > WORLD_H) {
+            p1.pos.y = WORLD_H - p1.dim.h / 2.0f;
         }
-        mat4_trs(   player1.transform, 
-                    player1.pos.x, player1.pos.y,
-                    player1.rotation,
-                    player1.sca.x, player1.sca.y );
+        mat4_trs(p1.transform, p1.pos.x, p1.pos.y, p1.rotation, p1.sca.x, p1.sca.y);
 
-        if(player2.pos.y - player2.dim.h / 2.0f < 0) {
-            player2.pos.y = player2.dim.h / 2.0f;
+        if(p2.pos.y - p2.dim.h / 2.0f < 0) {
+            p2.pos.y = p2.dim.h / 2.0f;
         }
-        if(player2.pos.y + player2.dim.h / 2.0f > WORLD_H) {
-            player2.pos.y = WORLD_H - player2.dim.h / 2.0f;
+        if(p2.pos.y + p2.dim.h / 2.0f > WORLD_H) {
+            p2.pos.y = WORLD_H - p2.dim.h / 2.0f;
         }
-        mat4_trs(   player2.transform, 
-                    player2.pos.x, player2.pos.y,
-                    player2.rotation,
-                    player2.sca.x, player2.sca.y );
+        mat4_trs(p2.transform, p2.pos.x, p2.pos.y, p2.rotation, p2.sca.x, p2.sca.y);
 
         if(app.is_paused == 0) {
-            ball.pos.x += ball.dir.x * ball.velocity;
-            ball.pos.y += ball.dir.y * ball.velocity;
+            float prev_x = ball.pos.x;
+            float prev_y = ball.pos.y;
+            ball.pos.x += ball.dir.x * ball.velocity * dt;
+            ball.pos.y += ball.dir.y * ball.velocity * dt;
+
+            // collision left wall
+            if(segments_intersect(  ball_radius, 0.0f, ball_radius, (float)WORLD_H,
+                                    prev_x, prev_y, ball.pos.x, ball.pos.y) != 0) {
+                if(ball.dir.x < 0) {
+                    ball.pos.x = ball_radius;
+                    ball.dir.x *= -1.0f;
+                }
+            }
+            // collision right wall
+            else if(segments_intersect( (float)WORLD_W - ball_radius, 0.0f, (float)WORLD_W - ball_radius, (float)WORLD_H,
+                                        prev_x, prev_y, ball.pos.x, ball.pos.y) != 0) {
+                if(ball.dir.x > 0) {
+                    ball.pos.x = WORLD_W - ball_radius;
+                    ball.dir.x *= -1.0f;
+                }
+            }
+            // collision bottom wall (y=WORLD_H, visual top)
+            if(segments_intersect(  0.0f, (float)WORLD_H - ball_radius, (float)WORLD_W, (float)WORLD_H - ball_radius,
+                                    prev_x, prev_y, ball.pos.x, ball.pos.y) != 0) {
+                if(ball.dir.y > 0) {
+                    ball.pos.y = WORLD_H - ball_radius;
+                    ball.dir.y *= -1.0f;
+                }
+            }
+            // collision top wall (y=0, visual bottom)
+            if(segments_intersect(  0.0f, ball_radius, (float)WORLD_W, ball_radius,
+                                    prev_x, prev_y, ball.pos.x, ball.pos.y) != 0) {
+                if(ball.dir.y < 0) {
+                    ball.pos.y = ball_radius;
+                    ball.dir.y *= -1.0f;
+                }
+            }
         }
 
-        ball.rotation += 0.04f;
+        ball.rotation += 0.18f;
         mat4_trs(ball.transform, ball.pos.x, ball.pos.y, ball.rotation, ball.sca.x, ball.sca.y);
 
 
@@ -534,9 +613,9 @@ int main() {
         // upload the new color data
         geometry_batched.vertex_count = 0;
         geometry_batched.index_count = 0;
-        geometry_batched_append(&geometry_batched, &background);
-        geometry_batched_append(&geometry_batched, &player1);
-        geometry_batched_append(&geometry_batched, &player2);
+        geometry_batched_append(&geometry_batched, &bg);
+        geometry_batched_append(&geometry_batched, &p1);
+        geometry_batched_append(&geometry_batched, &p2);
         geometry_batched_append(&geometry_batched, &ball);
 
         glBindBuffer(GL_ARRAY_BUFFER, vbo_vertex_data);
@@ -550,9 +629,9 @@ int main() {
 
         // // upload the new matrix data
         // geometry.instance_data_count = 0;
-        // geometry_instance_data_append(&geometry, background.transform);
-        // geometry_instance_data_append(&geometry, player1.transform);
-        // geometry_instance_data_append(&geometry, player2.transform);
+        // geometry_instance_data_append(&geometry, bg.transform);
+        // geometry_instance_data_append(&geometry, p1.transform);
+        // geometry_instance_data_append(&geometry, p2.transform);
         // geometry_instance_data_append(&geometry, ball.transform);
 
         // glBindBuffer(GL_ARRAY_BUFFER, vbo_instance_data);
